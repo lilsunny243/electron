@@ -52,6 +52,10 @@
 #include "ui/views/widget/widget.h"
 #include "ui/views/window/native_frame_view_mac.h"
 
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
+
 @interface ElectronProgressBar : NSProgressIndicator
 @end
 
@@ -160,6 +164,47 @@ void ViewDidMoveToSuperview(NSView* self, SEL _cmd) {
     return;
   }
   [self setFrame:[[self superview] bounds]];
+}
+
+// -[NSWindow orderWindow] does not handle reordering for children
+// windows. Their order is fixed to the attachment order (the last attached
+// window is on the top). Therefore, work around it by re-parenting in our
+// desired order.
+void ReorderChildWindowAbove(NSWindow* child_window, NSWindow* other_window) {
+  NSWindow* parent = [child_window parentWindow];
+  DCHECK(parent);
+
+  // `ordered_children` sorts children windows back to front.
+  NSArray<NSWindow*>* children = [[child_window parentWindow] childWindows];
+  std::vector<std::pair<NSInteger, NSWindow*>> ordered_children;
+  for (NSWindow* child in children)
+    ordered_children.push_back({[child orderedIndex], child});
+  std::sort(ordered_children.begin(), ordered_children.end(), std::greater<>());
+
+  // If `other_window` is nullptr, place `child_window` in front of
+  // all other children windows.
+  if (other_window == nullptr)
+    other_window = ordered_children.back().second;
+
+  if (child_window == other_window)
+    return;
+
+  for (NSWindow* child in children)
+    [parent removeChildWindow:child];
+
+  const bool relative_to_parent = parent == other_window;
+  if (relative_to_parent)
+    [parent addChildWindow:child_window ordered:NSWindowAbove];
+
+  // Re-parent children windows in the desired order.
+  for (auto [ordered_index, child] : ordered_children) {
+    if (child != child_window && child != other_window) {
+      [parent addChildWindow:child ordered:NSWindowAbove];
+    } else if (child == other_window && !relative_to_parent) {
+      [parent addChildWindow:other_window ordered:NSWindowAbove];
+      [parent addChildWindow:child_window ordered:NSWindowAbove];
+    }
+  }
 }
 
 }  // namespace
@@ -409,12 +454,6 @@ void NativeWindowMac::Close() {
 
 void NativeWindowMac::CloseImmediately() {
   RemoveChildFromParentWindow(this);
-
-  // Retain the child window before closing it. If the last reference to the
-  // NSWindow goes away inside -[NSWindow close], then bad stuff can happen.
-  // See e.g. http://crbug.com/616701.
-  base::scoped_nsobject<NSWindow> child_window(window_,
-                                               base::scoped_policy::RETAIN);
   [window_ close];
 }
 
@@ -759,13 +798,21 @@ bool NativeWindowMac::MoveAbove(const std::string& sourceId) {
   if (!webrtc::GetWindowOwnerPid(window_id))
     return false;
 
-  [window_ orderWindow:NSWindowAbove relativeTo:id.id];
+  if (!parent()) {
+    [window_ orderWindow:NSWindowAbove relativeTo:window_id];
+  } else {
+    NSWindow* other_window = [NSApp windowWithWindowNumber:window_id];
+    ReorderChildWindowAbove(window_, other_window);
+  }
 
   return true;
 }
 
 void NativeWindowMac::MoveTop() {
-  [window_ orderWindow:NSWindowAbove relativeTo:0];
+  if (!parent())
+    [window_ orderWindow:NSWindowAbove relativeTo:0];
+  else
+    ReorderChildWindowAbove(window_, nullptr);
 }
 
 void NativeWindowMac::SetResizable(bool resizable) {
@@ -1281,13 +1328,13 @@ void NativeWindowMac::SetProgressBar(double progress,
   // For the first time API invoked, we need to create a ContentView in
   // DockTile.
   if (first_time) {
-    NSImageView* image_view = [[[NSImageView alloc] init] autorelease];
+    NSImageView* image_view = [[NSImageView alloc] init];
     [image_view setImage:[NSApp applicationIconImage]];
     [dock_tile setContentView:image_view];
 
     NSRect frame = NSMakeRect(0.0f, 0.0f, dock_tile.size.width, 15.0);
     NSProgressIndicator* progress_indicator =
-        [[[ElectronProgressBar alloc] initWithFrame:frame] autorelease];
+        [[ElectronProgressBar alloc] initWithFrame:frame];
     [progress_indicator setStyle:NSProgressIndicatorStyleBar];
     [progress_indicator setIndeterminate:NO];
     [progress_indicator setBezeled:YES];
@@ -1434,8 +1481,8 @@ void NativeWindowMac::SetVibrancy(const std::string& type) {
     vibrancy_type_ = type;
 
     if (vibrantView == nil) {
-      vibrantView = [[[NSVisualEffectView alloc]
-          initWithFrame:[[window_ contentView] bounds]] autorelease];
+      vibrantView = [[NSVisualEffectView alloc]
+          initWithFrame:[[window_ contentView] bounds]];
       [window_ setVibrantView:vibrantView];
 
       [vibrantView
@@ -1533,6 +1580,10 @@ void NativeWindowMac::SelectPreviousTab() {
 
 void NativeWindowMac::SelectNextTab() {
   [window_ selectNextTab:nil];
+}
+
+void NativeWindowMac::ShowAllTabs() {
+  [window_ toggleTabOverview:nil];
 }
 
 void NativeWindowMac::MergeAllWindows() {

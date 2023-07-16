@@ -47,6 +47,10 @@ const isBeforeUnload = (event: Event, level: number, message: string) => {
 };
 
 describe('BrowserWindow module', () => {
+  it('sets the correct class name on the prototype', () => {
+    expect(BrowserWindow.prototype.constructor.name).to.equal('BrowserWindow');
+  });
+
   describe('BrowserWindow constructor', () => {
     it('allows passing void 0 as the webContents', async () => {
       expect(() => {
@@ -2068,6 +2072,14 @@ describe('BrowserWindow module', () => {
       it('does not throw', () => {
         expect(() => {
           w.selectNextTab();
+        }).to.not.throw();
+      });
+    });
+
+    describe('BrowserWindow.showAllTabs()', () => {
+      it('does not throw', () => {
+        expect(() => {
+          w.showAllTabs();
         }).to.not.throw();
       });
     });

@@ -40,6 +40,10 @@ describe('BrowserView module', () => {
     expect(webContents.getAllWebContents()).to.have.length(0);
   });
 
+  it('sets the correct class name on the prototype', () => {
+    expect(BrowserView.prototype.constructor.name).to.equal('BrowserView');
+  });
+
   it('can be created with an existing webContents', async () => {
     const wc = (webContents as typeof ElectronInternal.WebContents).create({ sandbox: true });
     await wc.loadURL('about:blank');
@@ -281,6 +285,23 @@ describe('BrowserView module', () => {
       expect(views).to.have.lengthOf(2);
       expect(views[0].webContents.id).to.equal(view1.webContents.id);
       expect(views[1].webContents.id).to.equal(view2.webContents.id);
+    });
+
+    it('persists ordering by z-index', () => {
+      const view1 = new BrowserView();
+      defer(() => view1.webContents.destroy());
+      w.addBrowserView(view1);
+      defer(() => w.removeBrowserView(view1));
+      const view2 = new BrowserView();
+      defer(() => view2.webContents.destroy());
+      w.addBrowserView(view2);
+      defer(() => w.removeBrowserView(view2));
+      w.setTopBrowserView(view1);
+
+      const views = w.getBrowserViews();
+      expect(views).to.have.lengthOf(2);
+      expect(views[0].webContents.id).to.equal(view2.webContents.id);
+      expect(views[1].webContents.id).to.equal(view1.webContents.id);
     });
   });
 
